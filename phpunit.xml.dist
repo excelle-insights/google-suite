@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+         cacheDirectory=".phpunit.cache"
+         failOnWarning="true"
+         failOnRisky="true">
+    <testsuites>
+        <testsuite name="Unit">
+            <directory>tests/Unit</directory>
+        </testsuite>
+        <testsuite name="Integration">
+            <directory>tests/Integration</directory>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory>src</directory>
+        </include>
+    </source>
+    <php>
+        <env name="GOOGLE_CLIENT_ID" value="test-client-id.apps.googleusercontent.com"/>
+        <env name="GOOGLE_CLIENT_SECRET" value="test-client-secret"/>
+        <env name="GOOGLE_REDIRECT_URI" value="https://example.test/oauth/callback"/>
+        <env name="GOOGLE_TABLE_PREFIX" value="google"/>
+    </php>
+</phpunit>
