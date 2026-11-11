@@ -95,6 +95,14 @@ class GoogleSuiteConfig
         return rtrim(self::get('GOOGLE_ATTACHMENT_ROOT', sys_get_temp_dir() . '/google-suite-attachments'), '/');
     }
 
+    /**
+     * Maximum attachment size in bytes. 0 disables the limit.
+     */
+    public static function attachmentMaxBytes(): int
+    {
+        return max(0, (int) self::get('GOOGLE_ATTACHMENT_MAX_BYTES', (string) (25 * 1024 * 1024)));
+    }
+
     public static function ensureCredentials(): void
     {
         if (self::clientId() === '' || self::clientSecret() === '') {

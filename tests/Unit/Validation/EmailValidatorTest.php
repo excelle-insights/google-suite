@@ -38,6 +38,16 @@ final class EmailValidatorTest extends TestCase
         $this->assertSame('alice@example.com', EmailValidator::normalizeRecipients('alice@example.com'));
     }
 
+    public function testNormalizeRecipientsWithEmailToNameShorthand(): void
+    {
+        $normalized = EmailValidator::normalizeRecipients([
+            'alice@example.com' => 'Alice',
+            'bob@example.com'   => '',
+        ]);
+
+        $this->assertSame('Alice <alice@example.com>, bob@example.com', $normalized);
+    }
+
     public function testNormalizeRecipientsWithNull(): void
     {
         $this->assertSame('', EmailValidator::normalizeRecipients(null));

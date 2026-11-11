@@ -21,6 +21,9 @@ use Throwable;
  */
 abstract class BaseClient
 {
+    private const RETRYABLE_STATUSES = [429, 500, 502, 503, 504];
+    private const MAX_RETRIES = 3;
+
     protected ?Service $service = null;
 
     public function __construct(
@@ -53,13 +56,17 @@ abstract class BaseClient
      *
      * @template T
      * @param callable(): T $operation
+     * @param int $attempt Number of retries already performed for this call.
+     * @param bool $retryable Whether transient rate-limit/server errors may be retried.
      * @return T
      * @throws SyncException
      */
-    protected function execute(callable $operation, string $operationName = ''): mixed
-    {
-        $started = microtime(true);
-
+    protected function execute(
+        callable $operation,
+        string $operationName = '',
+        int $attempt = 0,
+        bool $retryable = true,
+    ): mixed {
         try {
             $result = $operation();
             $this->log($operationName, 200, null);
@@ -68,9 +75,18 @@ abstract class BaseClient
             $status = $e->getCode();
             $this->log($operationName, $status, $e->getMessage());
 
-            if ($status === 401) {
+            if ($status === 401 && $attempt === 0) {
                 // Force a token refresh then retry once.
-                $this->refreshAndRetry($operation, $operationName);
+                return $this->refreshAndRetry($operation, $operationName, $attempt + 1, $retryable);
+            }
+
+            if (
+                $retryable
+                && in_array($status, self::RETRYABLE_STATUSES, true)
+                && $attempt < self::MAX_RETRIES
+            ) {
+                $this->backoff($attempt);
+                return $this->execute($operation, $operationName, $attempt + 1, $retryable);
             }
 
             throw new SyncException(
@@ -88,11 +104,25 @@ abstract class BaseClient
         }
     }
 
-    protected function refreshAndRetry(callable $operation, string $operationName): mixed
-    {
+    protected function refreshAndRetry(
+        callable $operation,
+        string $operationName,
+        int $attempt = 1,
+        bool $retryable = true,
+    ): mixed {
         // Rebuild the service with a freshly-resolved token.
         $this->service = $this->clientFactory->createService($this->serviceClass(), $this->userId);
-        return $this->execute($operation, $operationName);
+        return $this->execute($operation, $operationName, $attempt, $retryable);
+    }
+
+    /**
+     * Bounded exponential backoff with jitter.
+     */
+    protected function backoff(int $attempt): void
+    {
+        $delay = 250_000 * (2 ** $attempt);
+        $delay += random_int(0, 100_000);
+        usleep($delay);
     }
 
     private function log(string $operationName, int $status, ?string $message): void

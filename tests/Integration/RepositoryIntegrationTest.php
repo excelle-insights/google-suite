@@ -176,10 +176,12 @@ final class RepositoryIntegrationTest extends TestCase
 
         $row = $repo->findToken('google_suite', 2);
         $this->assertSame('tok', json_decode($row['access_token'], true)['access_token']);
+        $this->assertNull($row['client_secret']);
 
         $repo->saveToken('google_suite', 2, ['access_token' => 'tok2'], time() + 60, 'cid', 'csec');
         $row = $repo->findToken('google_suite', 2);
         $this->assertSame('tok2', json_decode($row['access_token'], true)['access_token']);
+        $this->assertNull($row['client_secret']);
 
         $this->assertSame(1, $repo->deleteToken('google_suite', 2));
         $this->assertNull($repo->findToken('google_suite', 2));

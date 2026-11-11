@@ -20,6 +20,7 @@ class OAuthController
     public function __construct(
         private readonly GoogleSuiteManager $manager,
         private readonly string|int $userId = 1,
+        private readonly bool $requireState = true,
     ) {}
 
     /**
@@ -28,9 +29,16 @@ class OAuthController
      */
     public function getAuthUrl(?string $state = null): string
     {
-        if ($state === null && session_status() === PHP_SESSION_ACTIVE) {
-            $state = bin2hex(random_bytes(16));
-            $_SESSION['google_suite_oauth_state'] = $state;
+        if ($state === null) {
+            if (session_status() === PHP_SESSION_ACTIVE) {
+                $state = bin2hex(random_bytes(16));
+                $_SESSION['google_suite_oauth_state'] = $state;
+            } elseif ($this->requireState) {
+                throw new AuthenticationException(
+                    'An active PHP session is required to issue an OAuth state token. '
+                    . 'Start a session, or construct OAuthController with requireState: false for CLI use.'
+                );
+            }
         }
         return $this->manager->getAuthorizationUrl($state);
     }
@@ -74,9 +82,16 @@ class OAuthController
             ];
         }
 
-        // CSRF verification (skip when no state was issued).
+        // CSRF verification. Web flows must always have a state token.
         $expectedState = $expectedState ?? $this->sessionState();
-        if ($expectedState !== null) {
+        if ($expectedState === null) {
+            if ($this->requireState) {
+                return [
+                    'status'  => 'error',
+                    'message' => 'Missing OAuth state. Start a new authorization flow.',
+                ];
+            }
+        } else {
             $actual = $query['state'] ?? '';
             if (!$this->manager->auth()->verifyState($expectedState, $actual)) {
                 return [

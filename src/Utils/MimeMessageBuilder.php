@@ -20,16 +20,17 @@ class MimeMessageBuilder
     private array $attachments = [];
 
     public function __construct(
-        private readonly array $to,
+        private readonly mixed $to,
         private readonly string $subject,
         private readonly string $body,
         private readonly string $html = '',
         private readonly string $from = '',
-        private readonly array $cc = [],
-        private readonly array $bcc = [],
+        private readonly mixed $cc = [],
+        private readonly mixed $bcc = [],
         private readonly string $messageId = '',
         private readonly array $references = [],
-        private readonly array $replyTo = [],
+        private readonly mixed $replyTo = [],
+        private readonly string $inReplyTo = '',
     ) {
         $this->boundary = $this->freshBoundary();
     }
@@ -65,16 +66,21 @@ class MimeMessageBuilder
     private function buildMessage(): string
     {
         $lines = [];
-        $lines[] = 'From: ' . $this->encodeHeader($this->from !== '' ? $this->from : 'me');
+        if ($this->from !== '') {
+            $lines[] = 'From: ' . $this->encodeRecipients($this->from);
+        }
         $lines[] = 'To: ' . $this->encodeRecipients($this->to);
-        if ($this->cc !== []) {
-            $lines[] = 'Cc: ' . $this->encodeRecipients($this->cc);
+        $cc = $this->encodeRecipients($this->cc);
+        if ($cc !== '') {
+            $lines[] = 'Cc: ' . $cc;
         }
-        if ($this->bcc !== []) {
-            $lines[] = 'Bcc: ' . $this->encodeRecipients($this->bcc);
+        $bcc = $this->encodeRecipients($this->bcc);
+        if ($bcc !== '') {
+            $lines[] = 'Bcc: ' . $bcc;
         }
-        if ($this->replyTo !== []) {
-            $lines[] = 'Reply-To: ' . $this->encodeRecipients($this->replyTo);
+        $replyTo = $this->encodeRecipients($this->replyTo);
+        if ($replyTo !== '') {
+            $lines[] = 'Reply-To: ' . $replyTo;
         }
         $lines[] = 'Subject: ' . $this->encodeHeader($this->subject);
         $lines[] = 'MIME-Version: 1.0';
@@ -82,6 +88,9 @@ class MimeMessageBuilder
 
         if ($this->messageId !== '') {
             $lines[] = 'Message-ID: ' . $this->messageId;
+        }
+        if ($this->inReplyTo !== '') {
+            $lines[] = 'In-Reply-To: ' . $this->inReplyTo;
         }
         if ($this->references !== []) {
             $lines[] = 'References: ' . implode(' ', array_filter($this->references));
@@ -153,12 +162,31 @@ class MimeMessageBuilder
         }
 
         return [
-            'Content-Type: ' . $attachment['mimeType'] . '; name="' . $this->encodeHeader($attachment['filename']) . '"',
-            'Content-Disposition: attachment; filename="' . $attachment['filename'] . '"',
+            'Content-Type: ' . $attachment['mimeType'] . '; ' . $this->filenameParameter('name', $attachment['filename']),
+            'Content-Disposition: attachment; ' . $this->filenameParameter('filename', $attachment['filename']),
             'Content-Transfer-Encoding: base64',
             '',
             ...explode("\r\n", chunk_split(base64_encode($data), 76, "\r\n")),
         ];
+    }
+
+    /**
+     * Build a safe filename/name MIME parameter.
+     *
+     * ASCII names use a quoted string with escaped quotes/backslashes.
+     * Non-ASCII names additionally use RFC 2231 parameter continuation.
+     */
+    private function filenameParameter(string $name, string $filename): string
+    {
+        if (preg_match('/[\x80-\xFF]/', $filename) === 0) {
+            return $name . '="' . addcslashes($filename, "\\\"") . '"';
+        }
+
+        $fallback = preg_replace('/[^\x20-\x7E]/', '_', $filename) ?? 'attachment';
+        $fallback = addcslashes($fallback !== '' ? $fallback : 'attachment', "\\\"");
+
+        return $name . '="' . $fallback . '"; '
+            . $name . "*=UTF-8''" . rawurlencode($filename);
     }
 
     /**

@@ -13,9 +13,13 @@ use Google\Service\Gmail\MessagePartHeader;
  * Converts Gmail API Message models into plain PHP arrays suitable for
  * local persistence and for building the Message/Attachment models.
  *
- * Extracted headers: Subject, From, To, Cc, Bcc, In-Reply-To, Message-ID.
+ * Extracted headers: Subject, From, To, Cc, Bcc, Reply-To, Message-ID,
+ * In-Reply-To and References.
  * Body parts: first text/plain and first text/html, decoded from
  * base64url. Attachment metadata: file name, MIME type, size, content id.
+ *
+ * Note: Gmail's internalDate is a Unix timestamp in milliseconds, not
+ * seconds. Values are stored as returned by the API.
  */
 class GmailMessageParser
 {
@@ -24,7 +28,7 @@ class GmailMessageParser
      *   subject:string, from_address:string, from_name:string,
      *   to_address:string, cc_address:string, bcc_address:string,
      *   reply_to_address:string, message_id:string, in_reply_to:string,
-     *   body_plain:string, body_html:string,
+     *   references:string, body_plain:string, body_html:string,
      *   attachments:array<int, array{google_id:string, filename:string, mime_type:string, size:int, content_id:string, is_inline:bool}>,
      *   label_ids:array<int, string>, snippet:string, internal_date:int,
      *   size_estimate:int, thread_id:string
@@ -40,15 +44,16 @@ class GmailMessageParser
         $bodyParts   = $payload !== null ? self::collectBodies($payload) : ['plain' => '', 'html' => ''];
 
         return [
-            'subject'          => $headers['Subject'] ?? '',
-            'from_address'     => self::emailOf($headers['From'] ?? ''),
-            'from_name'        => self::nameOf($headers['From'] ?? ''),
-            'to_address'       => $headers['To'] ?? '',
-            'cc_address'       => $headers['Cc'] ?? '',
-            'bcc_address'      => $headers['Bcc'] ?? '',
-            'reply_to_address' => $headers['Reply-To'] ?? '',
-            'message_id'       => $headers['Message-ID'] ?? '',
-            'in_reply_to'      => $headers['In-Reply-To'] ?? '',
+            'subject'          => $headers['subject'] ?? '',
+            'from_address'     => self::emailOf($headers['from'] ?? ''),
+            'from_name'        => self::nameOf($headers['from'] ?? ''),
+            'to_address'       => $headers['to'] ?? '',
+            'cc_address'       => $headers['cc'] ?? '',
+            'bcc_address'      => $headers['bcc'] ?? '',
+            'reply_to_address' => $headers['reply-to'] ?? '',
+            'message_id'       => $headers['message-id'] ?? '',
+            'in_reply_to'      => $headers['in-reply-to'] ?? '',
+            'references'       => $headers['references'] ?? '',
             'body_plain'       => $bodyParts['plain'],
             'body_html'        => $bodyParts['html'],
             'attachments'      => $attachments,
@@ -68,10 +73,53 @@ class GmailMessageParser
         $headers = [];
         foreach ($part->getHeaders() as $header) {
             if ($header instanceof MessagePartHeader) {
-                $headers[$header->getName()] = (string) $header->getValue();
+                $name = strtolower((string) $header->getName());
+                $headers[$name] = self::decodeHeader((string) $header->getValue());
             }
         }
         return $headers;
+    }
+
+    /**
+     * Decode RFC 2047 encoded words in a header value.
+     */
+    private static function decodeHeader(string $value): string
+    {
+        if ($value === '' || preg_match('/=\?[^?]+\?[BbQq]\?[^?]*\?=/', $value) !== 1) {
+            return $value;
+        }
+
+        if (function_exists('iconv_mime_decode')) {
+            $decoded = @iconv_mime_decode($value, ICONV_MIME_DECODE_CONTINUE_ON_ERROR, 'UTF-8');
+            if ($decoded !== false) {
+                return $decoded;
+            }
+        }
+
+        if (function_exists('mb_decode_mimeheader')) {
+            $decoded = @mb_decode_mimeheader($value);
+            if ($decoded !== false && $decoded !== '') {
+                return $decoded;
+            }
+        }
+
+        return $value;
+    }
+
+    /**
+     * Case-insensitive header lookup for a single message part.
+     */
+    private static function headerValue(MessagePart $part, string $name): string
+    {
+        foreach ($part->getHeaders() as $header) {
+            if (
+                $header instanceof MessagePartHeader
+                && strcasecmp((string) $header->getName(), $name) === 0
+            ) {
+                return (string) $header->getValue();
+            }
+        }
+        return '';
     }
 
     /**
@@ -118,26 +166,26 @@ class GmailMessageParser
         $attachments = [];
 
         $walk = function (MessagePart $current) use (&$walk, &$attachments): void {
-            $filename = (string) $current->getFilename();
-            $body     = $current->getBody();
-            $attachId = $body instanceof MessagePartBody ? (string) $body->getAttachmentId() : '';
-            $contentId = '';
+            $filename  = (string) $current->getFilename();
+            $body      = $current->getBody();
+            $attachId  = $body instanceof MessagePartBody ? (string) $body->getAttachmentId() : '';
+            $contentId = self::headerValue($current, 'Content-ID');
 
-            foreach ($current->getHeaders() as $header) {
-                if ($header->getName() === 'Content-ID') {
-                    $contentId = (string) $header->getValue();
-                    break;
+            // Inline images sometimes have a Content-ID but no filename.
+            // Keep them and give them a synthetic, filesystem-safe name.
+            if ($attachId !== '' && ($filename !== '' || $contentId !== '')) {
+                if ($filename === '') {
+                    $safe = preg_replace('/[^A-Za-z0-9._-]+/', '-', trim($contentId, " \t<>"));
+                    $filename = 'inline-' . ($safe !== '' && $safe !== null ? $safe : count($attachments) + 1);
                 }
-            }
 
-            if ($filename !== '' && $attachId !== '') {
                 $attachments[] = [
                     'google_id' => $attachId,
                     'filename'  => $filename,
                     'mime_type' => (string) $current->getMimeType(),
                     'size'      => $body instanceof MessagePartBody ? (int) $body->getSize() : 0,
                     'content_id'=> $contentId,
-                    'is_inline' => self::hasInlineDisposition($current),
+                    'is_inline' => self::hasInlineDisposition($current) || $contentId !== '',
                 ];
             }
 
@@ -154,12 +202,7 @@ class GmailMessageParser
 
     private static function hasInlineDisposition(MessagePart $part): bool
     {
-        foreach ($part->getHeaders() as $header) {
-            if ($header->getName() === 'Content-Disposition' && stripos((string) $header->getValue(), 'inline') !== false) {
-                return true;
-            }
-        }
-        return false;
+        return stripos(self::headerValue($part, 'Content-Disposition'), 'inline') !== false;
     }
 
     private static function decodePartBody(?MessagePartBody $body): string
@@ -180,7 +223,8 @@ class GmailMessageParser
         if ($remainder !== 0) {
             $data .= str_repeat('=', 4 - $remainder);
         }
-        return base64_decode(strtr($data, '-_', '+/'), true) ?: '';
+        $decoded = base64_decode(strtr($data, '-_', '+/'), true);
+        return $decoded === false ? '' : $decoded;
     }
 
     private static function emailOf(string $header): string

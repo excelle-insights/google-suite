@@ -123,6 +123,11 @@ class GoogleSuiteManager
         return $this->gmail->listMessages($query, $maxResults, $pageToken, $userId);
     }
 
+    public function listMessageIds(string $query = '', int $maxResults = 100, string $pageToken = ''): array
+    {
+        return $this->gmail->listMessageIds($query, $maxResults, $pageToken);
+    }
+
     public function getMessage(string $messageId, string|int $userId = 1): \ExcelleInsights\GoogleSuite\Models\Message
     {
         return $this->gmail->getMessage($messageId, $userId);
@@ -149,6 +154,16 @@ class GoogleSuiteManager
     public function createLabel(string $name, string $type = 'user', string|int $userId = 1): \ExcelleInsights\GoogleSuite\Models\Label
     {
         return $this->gmail->createLabel($name, $type, $userId);
+    }
+
+    public function findLabelByName(string $name, string|int $userId = 1): ?\ExcelleInsights\GoogleSuite\Models\Label
+    {
+        return $this->gmail->findLabelByName($name, $userId);
+    }
+
+    public function getOrCreateLabel(string $name, string $type = 'user', string|int $userId = 1): \ExcelleInsights\GoogleSuite\Models\Label
+    {
+        return $this->gmail->getOrCreateLabel($name, $type, $userId);
     }
 
     public function deleteLabel(string $labelId, string|int $userId = 1): void

@@ -181,11 +181,13 @@ class GoogleAuthManager
     {
         try {
             $payload = $this->readPayload($userId);
+            $token   = $payload['refresh_token'] ?? $payload['access_token'] ?? null;
             $client  = $this->createClient();
-            if (!empty($payload['refresh_token'])) {
-                $client->refreshToken($payload['refresh_token']);
+            if (is_string($token) && $token !== '') {
+                // Pass the refresh token explicitly so Google revokes the
+                // grant, not just the short-lived access token.
+                $client->revokeToken($token);
             }
-            $client->revokeToken();
         } catch (\Throwable $e) {
             // Log and continue so local cleanup always happens.
             error_log('GoogleSuite revokeToken: ' . $e->getMessage());
@@ -236,13 +238,13 @@ class GoogleAuthManager
         if (!empty($token['expires_in'])) {
             $expiresAt = time() + (int) $token['expires_in'];
         }
+        // The client secret belongs in configuration, never in the token row.
         $this->tokenRepo->saveToken(
             $this->app,
             $userId,
             $token,
             $expiresAt,
             GoogleSuiteConfig::clientId(),
-            GoogleSuiteConfig::clientSecret(),
         );
     }
 

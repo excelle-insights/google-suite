@@ -69,6 +69,24 @@ final class MessageTest extends TestCase
         $this->assertSame(SyncStatus::Pending, $message->syncStatus);
     }
 
+    public function testRfcHeaderFieldsRoundTrip(): void
+    {
+        $message = Message::fromArray([
+            'message_id'  => '<child@example.com>',
+            'in_reply_to' => '<parent@example.com>',
+            'references'  => '<root@example.com> <parent@example.com>',
+        ]);
+
+        $this->assertSame('<child@example.com>', $message->messageId);
+        $this->assertSame('<parent@example.com>', $message->inReplyTo);
+        $this->assertSame('<root@example.com> <parent@example.com>', $message->references);
+
+        $array = $message->toArray();
+        $this->assertSame('<child@example.com>', $array['message_id']);
+        $this->assertSame('<parent@example.com>', $array['in_reply_to']);
+        $this->assertSame('<root@example.com> <parent@example.com>', $array['references']);
+    }
+
     public function testLabelRoundTrip(): void
     {
         $label = Label::fromArray([

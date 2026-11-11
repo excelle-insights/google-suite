@@ -26,7 +26,7 @@ class AccessTokenRepository extends AbstractRepository
     protected function fillable(): array
     {
         return [
-            'app', 'user_id', 'client_id', 'client_secret', 'access_token',
+            'app', 'user_id', 'client_id', 'access_token',
             'expires_at', 'updated_at',
         ];
     }
@@ -43,6 +43,8 @@ class AccessTokenRepository extends AbstractRepository
      * Upsert a JSON-encoded token payload for an app + user.
      *
      * @param array<string, mixed> $tokenPayload
+     * @param string|null $clientSecret Deprecated and ignored; the client
+     *                                  secret belongs in configuration.
      */
     public function saveToken(
         string $app,
@@ -56,12 +58,12 @@ class AccessTokenRepository extends AbstractRepository
 
         $stmt = $this->pdo->prepare(
             'INSERT INTO api_access_tokens
-                (app, user_id, client_id, client_secret, access_token, expires_at, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())
+                (app, user_id, client_id, access_token, expires_at, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, NOW(), NOW())
              ON DUPLICATE KEY UPDATE
                 access_token   = VALUES(access_token),
                 client_id      = VALUES(client_id),
-                client_secret  = VALUES(client_secret),
+                client_secret  = NULL,
                 expires_at     = VALUES(expires_at),
                 updated_at     = NOW()'
         );
@@ -69,7 +71,6 @@ class AccessTokenRepository extends AbstractRepository
             $app,
             (string) $userId,
             $clientId,
-            $clientSecret,
             $json,
             $expiresAt,
         ]);

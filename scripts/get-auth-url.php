@@ -13,7 +13,7 @@ use ExcelleInsights\GoogleSuite\Controller\OAuthController;
 use ExcelleInsights\GoogleSuite\Facade\GoogleSuiteManager;
 
 $suite = new GoogleSuiteManager(connectDb());
-$oauth = new OAuthController($suite);
+$oauth = new OAuthController($suite, 1, false);
 
 $authUrl = $oauth->getAuthUrl();
 

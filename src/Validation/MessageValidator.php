@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ExcelleInsights\GoogleSuite\Validation;
 
+use ExcelleInsights\GoogleSuite\Config\GoogleSuiteConfig;
 use ExcelleInsights\GoogleSuite\Exceptions\ValidationException;
 
 /**
@@ -32,14 +33,30 @@ class MessageValidator
 
         if (!isset($data['to']) || $data['to'] === '' || $data['to'] === []) {
             $errors['to'] = 'The "to" recipient is required';
+        } else {
+            self::validateRecipients('to', $data['to'], $errors, true);
         }
 
         if (empty($data['subject']) || !is_string($data['subject'])) {
             $errors['subject'] = 'A non-empty subject is required';
         }
 
-        if (empty($data['body']) || !is_string($data['body'])) {
-            $errors['body'] = 'A non-empty body is required';
+        $body = $data['body'] ?? '';
+        $html = $data['html'] ?? '';
+        $hasBody = is_string($body) && trim($body) !== '';
+        $hasHtml = is_string($html) && trim($html) !== '';
+        if (!$hasBody && !$hasHtml) {
+            $errors['body'] = 'A plain-text or HTML body is required';
+        }
+
+        foreach (['cc', 'bcc'] as $field) {
+            if (isset($data[$field]) && $data[$field] !== '' && $data[$field] !== []) {
+                self::validateRecipients($field, $data[$field], $errors, false);
+            }
+        }
+
+        if (isset($data['from']) && $data['from'] !== '') {
+            self::validateRecipients('from', $data['from'], $errors, true);
         }
 
         if (!$errors) {
@@ -50,15 +67,46 @@ class MessageValidator
     }
 
     /**
+     * Validate one or more recipients in the formats accepted by
+     * EmailValidator::normalizeRecipients().
+     *
+     * @param array<string, string> $errors
+     */
+    private static function validateRecipients(
+        string $field,
+        mixed $value,
+        array &$errors,
+        bool $required,
+    ): void {
+        $normalized = EmailValidator::normalizeRecipients($value);
+        if ($normalized === '') {
+            if ($required) {
+                $errors[$field] = "The \"$field\" recipient is invalid";
+            }
+            return;
+        }
+
+        foreach (explode(',', $normalized) as $recipient) {
+            $email = EmailValidator::extractEmail(trim($recipient));
+            if (!EmailValidator::isValid($email)) {
+                $errors[$field] = "The \"$field\" recipient contains an invalid email address";
+                return;
+            }
+        }
+    }
+
+    /**
      * Validate the attachments array and return it normalized to
      * [['path' => ..., 'filename' => ..., 'mimeType' => ...], ...].
      *
+     * @param int|null $maxBytes Maximum size per attachment; null uses config.
      * @return array<int, array{path:string, filename:string, mimeType:string}>
      */
-    public static function validateAttachments(array $data): array
+    public static function validateAttachments(array $data, ?int $maxBytes = null): array
     {
         $errors      = [];
         $attachments = $data['attachments'] ?? [];
+        $maxBytes  ??= GoogleSuiteConfig::attachmentMaxBytes();
 
         if ($attachments === []) {
             return [];
@@ -81,6 +129,14 @@ class MessageValidator
             }
             if (!file_exists($path)) {
                 $errors[$index] = "Attachment file not found: $path";
+                continue;
+            }
+            $size = @filesize($path);
+            if ($maxBytes > 0 && $size !== false && $size > $maxBytes) {
+                $errors[$index] = sprintf(
+                    'Attachment exceeds the maximum size of %d bytes',
+                    $maxBytes,
+                );
                 continue;
             }
             $normalized[] = [
