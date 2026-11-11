@@ -54,7 +54,12 @@ class GmailService extends AbstractService
         parent::__construct($authManager, $logger);
 
         $factory = new GoogleClientFactory($authManager);
-        $this->client      = new GmailClient($factory, (int) $this->defaultUserId, $this->logger);
+        $this->client      = new GmailClient(
+            $factory,
+            (int) $this->defaultUserId,
+            $this->logger,
+            GoogleSuiteConfig::gmailUser(),
+        );
         $this->messages    = new MessageRepository($pdo);
         $this->labels      = new LabelRepository($pdo);
         $this->sentEmails  = new SentEmailRepository($pdo);
@@ -69,25 +74,65 @@ class GmailService extends AbstractService
     // ───────────────────────── Messages ──────────────────────────
 
     /**
+     * List message IDs matching a Gmail query without fetching bodies.
+     *
+     * This is the stable API for callers that want to fetch each message
+     * themselves and isolate per-message failures.
+     *
+     * @return array{gm_ids:array<int, string>, nextPageToken:?string, resultSizeEstimate:int}
+     */
+    public function listMessageIds(string $query = '', int $maxResults = 100, string $pageToken = ''): array
+    {
+        $response = $this->client->listMessages($query, $maxResults, $pageToken);
+
+        $ids = [];
+        foreach ($response->getMessages() as $record) {
+            $ids[] = (string) $record->getId();
+        }
+
+        return [
+            'gm_ids'             => $ids,
+            'nextPageToken'      => $response->nextPageToken,
+            'resultSizeEstimate' => $response->getResultSizeEstimate(),
+        ];
+    }
+
+    /**
      * List messages matching a Gmail query. Results are cached locally.
      *
-     * @return array{gm_ids:array<int, string>, messages:array<int, Message>, nextPageToken:?string, resultSizeEstimate:int}
+     * A failure fetching one message is recorded in `errors` and does not
+     * abort the rest of the batch.
+     *
+     * @return array{
+     *   gm_ids:array<int, string>,
+     *   messages:array<int, Message>,
+     *   errors:array<string, string>,
+     *   nextPageToken:?string,
+     *   resultSizeEstimate:int
+     * }
      */
     public function listMessages(string $query = '', int $maxResults = 100, string $pageToken = '', string|int $userId = 1): array
     {
         $response = $this->client->listMessages($query, $maxResults, $pageToken);
 
-        $ids = [];
+        $ids      = [];
         $messages = [];
+        $errors   = [];
         foreach ($response->getMessages() as $record) {
-            $gmailId = $record->getId();
+            $gmailId = (string) $record->getId();
             $ids[]   = $gmailId;
-            $messages[] = $this->getMessage((string) $gmailId, $userId);
+
+            try {
+                $messages[] = $this->getMessage($gmailId, $userId);
+            } catch (Throwable $e) {
+                $errors[$gmailId] = $e->getMessage();
+            }
         }
 
         return [
             'gm_ids'              => $ids,
             'messages'            => $messages,
+            'errors'              => $errors,
             'nextPageToken'       => $response->nextPageToken,
             'resultSizeEstimate'  => $response->getResultSizeEstimate(),
         ];
@@ -145,7 +190,7 @@ class GmailService extends AbstractService
      *   from?:string, cc?:string|array, bcc?:string|array,
      *   attachments?:array<int, array{path:string, filename?:string, mimeType?:string}>,
      *   threadId?:string, inReplyTo?:string, references?:array<int, string>,
-     *   firstMessageId?:string
+     *   messageId?:string, firstMessageId?:string
      * } $params
      */
     public function sendMessage(array $params, string|int $userId = 1): SentEmail
@@ -153,20 +198,23 @@ class GmailService extends AbstractService
         MessageValidator::validate($params);
         $attachments = MessageValidator::validateAttachments($params);
 
+        $body    = (string) ($params['body'] ?? '');
+        $preview = trim($body) !== '' ? $body : strip_tags((string) ($params['html'] ?? ''));
+
         $rowId = $this->sentEmails->insert([
             'user_id'         => (int) $userId,
             'to_address'      => EmailValidator::normalizeRecipients($params['to']),
             'cc_address'      => EmailValidator::normalizeRecipients($params['cc'] ?? []),
             'bcc_address'     => EmailValidator::normalizeRecipients($params['bcc'] ?? []),
             'subject'         => $params['subject'],
-            'body_preview'    => mb_substr($params['body'], 0, 400),
+            'body_preview'    => mb_substr($preview, 0, 400),
             'has_attachments' => $attachments !== [] ? 1 : 0,
             'status'          => 'pending',
         ]);
 
         try {
-            $raw = $this->buildMime($params, $attachments);
-            $sent = $this->client->sendMessage($raw);
+            $raw  = $this->buildMime($params, $attachments);
+            $sent = $this->client->sendMessage($raw, $params['threadId'] ?? null);
         } catch (Throwable $e) {
             $this->sentEmails->update((string) $rowId, [
                 'status'        => 'failed',
@@ -227,6 +275,32 @@ class GmailService extends AbstractService
             $rows[] = $this->persistLabel($label, (int) $userId);
         }
         return $rows;
+    }
+
+    /**
+     * Find a label by exact name, refreshing the local label cache first.
+     */
+    public function findLabelByName(string $name, string|int $userId = 1): ?Label
+    {
+        $name = trim($name);
+        if ($name === '') {
+            return null;
+        }
+
+        $this->listLabels($userId);
+        $row = $this->labels->findByName($name, (int) $userId);
+
+        return $row === null ? null : Label::fromArray($row);
+    }
+
+    /**
+     * Return an existing label or create it. Prevents duplicate labels for
+     * workflows that need a single well-known label (e.g. "Plana/Tickets").
+     */
+    public function getOrCreateLabel(string $name, string $type = 'user', string|int $userId = 1): Label
+    {
+        return $this->findLabelByName($name, $userId)
+            ?? $this->createLabel($name, $type, $userId);
     }
 
     /**
@@ -431,6 +505,9 @@ class GmailService extends AbstractService
             'cc_address'       => $parsed['cc_address'],
             'bcc_address'      => $parsed['bcc_address'],
             'reply_to_address' => $parsed['reply_to_address'],
+            'message_id'       => $parsed['message_id'] !== '' ? $parsed['message_id'] : null,
+            'in_reply_to'      => $parsed['in_reply_to'] !== '' ? $parsed['in_reply_to'] : null,
+            'references'       => $parsed['references'] !== '' ? $parsed['references'] : null,
             'snippet'          => $parsed['snippet'],
             'body_plain'       => $parsed['body_plain'],
             'body_html'        => $parsed['body_html'],
@@ -453,17 +530,20 @@ class GmailService extends AbstractService
      */
     private function buildMime(array $params, array $attachments): string
     {
+        $messageId = $params['messageId'] ?? $params['firstMessageId'] ?? '';
+
         $builder = new MimeMessageBuilder(
             to:      $params['to'],
             subject: $params['subject'],
-            body:    $params['body'],
+            body:    $params['body'] ?? '',
             html:    $params['html'] ?? '',
             from:    $params['from'] ?? '',
             cc:      $params['cc'] ?? [],
             bcc:     $params['bcc'] ?? [],
-            messageId: isset($params['messageId']) ? (string) $params['messageId'] : '',
+            messageId: (string) $messageId,
             references: isset($params['references']) && is_array($params['references']) ? $params['references'] : [],
-            replyTo: isset($params['replyTo']) && is_array($params['replyTo']) ? array_values($params['replyTo']) : [],
+            replyTo: $params['replyTo'] ?? [],
+            inReplyTo: isset($params['inReplyTo']) ? (string) $params['inReplyTo'] : '',
         );
 
         if ($attachments !== []) {

@@ -114,4 +114,47 @@ final class GoogleSuiteManagerTest extends TestCase
 
         $this->assertSame('error', $result['status']);
     }
+
+    public function testOAuthControllerRequiresStateForWebFlow(): void
+    {
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            $this->markTestSkipped('A PHP session is already active.');
+        }
+
+        $suite = new GoogleSuiteManager($this->pdo);
+        $oauth = new OAuthController($suite);
+
+        $this->expectException(\ExcelleInsights\GoogleSuite\Exceptions\AuthenticationException::class);
+        $oauth->getAuthUrl();
+    }
+
+    public function testOAuthControllerAllowsStatelessCliFlow(): void
+    {
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            $this->markTestSkipped('A PHP session is already active.');
+        }
+
+        $suite = new GoogleSuiteManager($this->pdo);
+        $oauth = new OAuthController($suite, 1, false);
+
+        $url = $oauth->getAuthUrl();
+
+        $this->assertStringContainsString('accounts.google.com', $url);
+        $this->assertStringNotContainsString('state=', $url);
+    }
+
+    public function testOAuthControllerRejectsCallbackWithoutStateInWebFlow(): void
+    {
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            $this->markTestSkipped('A PHP session is already active.');
+        }
+
+        $suite = new GoogleSuiteManager($this->pdo);
+        $oauth = new OAuthController($suite);
+
+        $result = $oauth->handleCallback(['code' => 'abc'], null);
+
+        $this->assertSame('error', $result['status']);
+        $this->assertStringContainsString('Missing OAuth state', $result['message']);
+    }
 }

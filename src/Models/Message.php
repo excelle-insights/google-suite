@@ -38,6 +38,9 @@ class Message implements ModelInterface
         public readonly ?string $syncedAt = null,
         public readonly ?string $createdAt = null,
         public readonly ?string $updatedAt = null,
+        public readonly ?string $messageId = null,
+        public readonly ?string $inReplyTo = null,
+        public readonly ?string $references = null,
     ) {}
 
     public function toArray(): array
@@ -54,6 +57,9 @@ class Message implements ModelInterface
             'cc_address'       => $this->ccAddress,
             'bcc_address'      => $this->bccAddress,
             'reply_to_address' => $this->replyToAddress,
+            'message_id'       => $this->messageId,
+            'in_reply_to'      => $this->inReplyTo,
+            'references'       => $this->references,
             'snippet'          => $this->snippet,
             'body_plain'       => $this->bodyPlain,
             'body_html'        => $this->bodyHtml,
@@ -93,6 +99,9 @@ class Message implements ModelInterface
             ccAddress:        $data['cc_address'] ?? null,
             bccAddress:       $data['bcc_address'] ?? null,
             replyToAddress:   $data['reply_to_address'] ?? null,
+            messageId:        $data['message_id'] ?? null,
+            inReplyTo:        $data['in_reply_to'] ?? null,
+            references:       $data['references'] ?? null,
             snippet:          $data['snippet'] ?? null,
             bodyPlain:        $data['body_plain'] ?? null,
             bodyHtml:         $data['body_html'] ?? null,

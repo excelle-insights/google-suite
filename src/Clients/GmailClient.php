@@ -24,7 +24,7 @@ class GmailClient extends BaseClient
         string $user = 'me',
     ) {
         parent::__construct($clientFactory, $userId, $logger);
-        $this->user = $user;
+        $this->user = $user !== '' ? $user : 'me';
     }
 
     private string $user;
@@ -76,14 +76,26 @@ class GmailClient extends BaseClient
     /**
      * Send a message built from a raw RFC2822 MIME string.
      *
+     * Passing a thread id keeps the message in an existing Gmail
+     * conversation instead of starting a new one.
+     *
      * @return Gmail\Message The sent message (id + threadId).
      */
-    public function sendMessage(string $rawMime): Gmail\Message
+    public function sendMessage(string $rawMime, ?string $threadId = null): Gmail\Message
     {
         $message = new Gmail\Message(['raw' => $this->base64UrlEncode($rawMime)]);
+        if ($threadId !== null && $threadId !== '') {
+            $message->setThreadId($threadId);
+        }
+
+        // A send is not idempotent: do not auto-retry rate-limit/server
+        // errors without an idempotency key. A 401 is still retried because
+        // the request was rejected before delivery.
         return $this->execute(
             fn () => $this->service()->users_messages->send($this->user, $message),
             'users.messages.send',
+            0,
+            false,
         );
     }
 
@@ -249,7 +261,13 @@ class GmailClient extends BaseClient
 
     public static function base64UrlDecode(string $data): string
     {
-        $padded = str_pad(strtr($data, '-_', '+/'), strlen($data) % 4, '=', STR_PAD_RIGHT);
-        return base64_decode($padded, true) ?: '';
+        $data      = strtr($data, '-_', '+/');
+        $remainder = strlen($data) % 4;
+        if ($remainder !== 0) {
+            $data .= str_repeat('=', 4 - $remainder);
+        }
+
+        $decoded = base64_decode($data, true);
+        return $decoded === false ? '' : $decoded;
     }
 }

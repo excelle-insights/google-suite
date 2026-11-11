@@ -33,7 +33,14 @@ class EmailValidator
         }
         if (is_array($value)) {
             $parts = [];
-            foreach ($value as $item) {
+            foreach ($value as $key => $item) {
+                // Support ['email@example.com' => 'Display Name'] shorthand.
+                if (is_string($key) && self::isValid($key)) {
+                    $name = is_string($item) ? trim($item) : '';
+                    $parts[] = $name !== '' ? sprintf('%s <%s>', $name, $key) : $key;
+                    continue;
+                }
+
                 if (is_array($item)) {
                     $email = $item['email'] ?? '';
                     $name  = $item['name'] ?? '';

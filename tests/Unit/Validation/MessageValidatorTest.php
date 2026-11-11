@@ -67,4 +67,102 @@ final class MessageValidatorTest extends TestCase
             'attachments' => [['path' => '/does/not/exist/file.pdf']],
         ]);
     }
+
+    public function testHtmlOnlyMessagePasses(): void
+    {
+        $validated = MessageValidator::validate([
+            'to'      => 'client@example.com',
+            'subject' => 'Hello',
+            'html'    => '<p>HTML body</p>',
+        ]);
+
+        $this->assertSame([], $validated);
+    }
+
+    public function testMissingBodyAndHtmlThrowsBodyError(): void
+    {
+        try {
+            MessageValidator::validate([
+                'to'      => 'client@example.com',
+                'subject' => 'Hello',
+                'body'    => '   ',
+                'html'    => '',
+            ]);
+            $this->fail('Expected ValidationException');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('body', $e->getErrors());
+        }
+    }
+
+    public function testInvalidRecipientThrows(): void
+    {
+        try {
+            MessageValidator::validate([
+                'to'      => 'not-an-email',
+                'subject' => 'Hello',
+                'body'    => 'Body',
+            ]);
+            $this->fail('Expected ValidationException');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('to', $e->getErrors());
+        }
+    }
+
+    public function testInvalidFromThrows(): void
+    {
+        try {
+            MessageValidator::validate([
+                'to'      => 'client@example.com',
+                'subject' => 'Hello',
+                'body'    => 'Body',
+                'from'    => 'Not An Address',
+            ]);
+            $this->fail('Expected ValidationException');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('from', $e->getErrors());
+        }
+    }
+
+    public function testAssociativeRecipientsPassValidation(): void
+    {
+        $validated = MessageValidator::validate([
+            'to'      => ['client@example.com' => 'Client Name'],
+            'cc'      => ['finance@example.com' => 'Finance'],
+            'subject' => 'Hello',
+            'body'    => 'Body',
+        ]);
+
+        $this->assertSame([], $validated);
+    }
+
+    public function testAttachmentExceedingSizeLimitThrows(): void
+    {
+        $path = sys_get_temp_dir() . '/google-suite-size-' . uniqid() . '.txt';
+        file_put_contents($path, str_repeat('x', 100));
+
+        try {
+            $this->expectException(ValidationException::class);
+            MessageValidator::validateAttachments([
+                'attachments' => [['path' => $path]],
+            ], 10);
+        } finally {
+            @unlink($path);
+        }
+    }
+
+    public function testZeroSizeLimitDisablesCheck(): void
+    {
+        $path = sys_get_temp_dir() . '/google-suite-size-' . uniqid() . '.txt';
+        file_put_contents($path, str_repeat('x', 100));
+
+        try {
+            $attachments = MessageValidator::validateAttachments([
+                'attachments' => [['path' => $path]],
+            ], 0);
+
+            $this->assertCount(1, $attachments);
+        } finally {
+            @unlink($path);
+        }
+    }
 }

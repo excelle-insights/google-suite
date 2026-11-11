@@ -27,7 +27,8 @@ class MessageRepository extends AbstractRepository
         return [
             'google_id', 'thread_id', 'user_id', 'subject', 'from_address',
             'from_name', 'to_address', 'cc_address', 'bcc_address',
-            'reply_to_address', 'snippet', 'body_plain', 'body_html',
+            'reply_to_address', 'message_id', 'in_reply_to', 'references',
+            'snippet', 'body_plain', 'body_html',
             'label_ids', 'is_read', 'is_starred', 'is_draft', 'is_trashed',
             'has_attachments', 'internal_date', 'size_estimate', 'raw_payload',
             'sync_status', 'retry_count', 'error_message', 'last_attempt_at',

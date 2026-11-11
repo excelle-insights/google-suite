@@ -6,7 +6,10 @@
     "keywords": ["google", "gmail", "calendar", "drive", "oauth2", "google-api"],
     "require": {
         "php": "^8.1",
+        "ext-fileinfo": "*",
+        "ext-iconv": "*",
         "ext-json": "*",
+        "ext-mbstring": "*",
         "ext-pdo": "*",
         "google/apiclient": "^2.15.0",
         "guzzlehttp/guzzle": "^7.0",
@@ -26,6 +29,5 @@
             "ExcelleInsights\\GoogleSuite\\Tests\\": "tests/"
         }
     },
-    "minimum-stability": "dev",
     "prefer-stable": true
 }

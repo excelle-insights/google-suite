@@ -7,6 +7,21 @@
  *   php migrate.php
  *   php migrate.php --debug=true
  *   php migrate.php rollback
+ *
+ * Database connection (required):
+ *   DB_DSN       e.g. mysql:host=127.0.0.1;dbname=myapp
+ *   DB_USER      database user
+ *   DB_PASSWORD  database password
+ *
+ * These are read from the process environment or a .env file in the package
+ * root / config/env directory. They must point at the application database.
+ *
+ * Table prefix warning:
+ *   The bundled migrations hard-code the default `google_` prefix and do not
+ *   read GOOGLE_TABLE_PREFIX. If your application uses a custom prefix, copy
+ *   `database/migrations` into the app and adapt the table names first. The
+ *   recommended production setup is to run the migrations from the app's own
+ *   Phinx configuration (see README).
  */
 
 $root = __DIR__;
